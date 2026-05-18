@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: MIT
-# Z3 formal verification for cnum32_lshr_const (cnum_def.h line 254-263, T=32)
+# Z3 formal verification for cnum32_lshr_const (cnum_def.h, T=32)
 #
-# Theorem: forall ci, k, x: ci non-empty and 0 <= k < 32
-#         implies (x >> k) in lshr_const(ci, k)
+# Theorem: forall ci, k, x: ci non-empty, x in ci
+#         implies (x >> (k & (T-1))) in lshr_const(ci, k)
 #
 # C implementation (from cnum_def.h):
 #   lshr_const(ci, k):
-#               if empty(ci)                    -> EMPTY
-#               if cross_unsigned_limit(ci)      -> {0, UT_MAX>>k}
+#               if empty(ci)              -> EMPTY
+#               k &= T-1;
+#               if cross_unsigned_limit(ci) -> {0, UT_MAX>>k}
 #               new_base = ci.base >> k
 #               new_ub   = (ci.base + ci.size) >> k
 #               return from_urange(new_base, new_ub)
@@ -20,7 +21,8 @@ def main():
     t0 = time.monotonic()
 
     T = 32
-    UT_MAX = BitVecVal((1 << T) - 1, T)
+    UT_MAX_VAL = (1 << T) - 1
+    UT_MAX = BitVecVal(UT_MAX_VAL, T)
     EMPTY_base = UT_MAX
     EMPTY_size = UT_MAX
     TOP_base   = BitVecVal(0, T)
@@ -43,9 +45,11 @@ def main():
     def contains(base, size, v):
         empty = is_empty(base, size)
         ov    = urange_overflow(base, size)
+        # base + size as C uint32_t (wrap on overflow)
+        sum_wrapped = (base + size) & UT_MAX
         return If(empty, False,
                   If(ov,
-                     Or(UGE(v, base), ULE(v, base + size)),
+                     Or(UGE(v, base), ULE(v, sum_wrapped)),
                      And(UGE(v, base), ULE(v, base + size))))
 
     def cross_unsigned_limit(base, size):
@@ -54,38 +58,45 @@ def main():
                   And(contains(base, size, UT_MAX),
                       contains(base, size, BitVecVal(0, T))))
 
-    # lshr_const: EMPTY if empty; UNBOUNDED if cross_unsigned_limit; else from_urange.
-    new_base = LShR(ci_base, k)
-    new_ub   = LShR(ci_base + ci_size, k)
-    exact_base = If(UGT(new_base, new_ub), EMPTY_base, new_base)
-    exact_size = If(UGT(new_base, new_ub), EMPTY_size, new_ub - new_base)
+    ci_empty = is_empty(ci_base, ci_size)
+    ci_top   = is_top(ci_base, ci_size)
+    ci_cul   = cross_unsigned_limit(ci_base, ci_size)
 
-    ci_crosses = cross_unsigned_limit(ci_base, ci_size)
-    # cross_unsigned_limit: result is [0, UT_MAX>>k] = {base=0, size=UT_MAX>>k}.
-    res_base = If(is_empty(ci_base, ci_size), ci_base,
-                  If(ci_crosses, BitVecVal(0, T),
-                     exact_base))
-    res_size = If(is_empty(ci_base, ci_size), ci_size,
-                  If(ci_crosses, LShR(UT_MAX, k),
-                     exact_size))
+    # lshr_const: k &= T-1
+    k_norm = k & BitVecVal(T - 1, T)
+    # cross_unsigned_limit(ci): result is {0, UT_MAX>>k}
+    cul_res_base = BitVecVal(0, T)
+    cul_res_size = LShR(UT_MAX, k_norm)
+    # non-cul path: from_urange(ci.base>>k, (ci.base+ci.size)>>k)
+    new_base = LShR(ci_base, k_norm)
+    new_ub   = LShR(ci_base + ci_size, k_norm)
+    nc_base = If(UGT(new_base, new_ub), EMPTY_base, new_base)
+    nc_size = If(UGT(new_base, new_ub), EMPTY_size, new_ub - new_base)
 
-    x_shr = LShR(x, k)
+    res_base = If(ci_empty, EMPTY_base, If(ci_cul, cul_res_base, nc_base))
+    res_size = If(ci_empty, EMPTY_size, If(ci_cul, cul_res_size, nc_size))
 
-    # Theorem: ci non-empty, 0 <= k < T, x in ci  implies  x>>k in res
+    x_shr = LShR(x, k_norm)
+
+    # Theorem: x in ci  implies  x>>(k&31) in lshr_const(ci, k)
+    # (k is unconstrained 32-bit; lshr_const internally normalizes it)
     theorem = Implies(
-        And(ULE(k, BitVecVal(T - 1, T)),  # 0 <= k < T
-            contains(ci_base, ci_size, x)),
+        contains(ci_base, ci_size, x),
         contains(res_base, res_size, x_shr))
 
     s = Solver()
     s.set("timeout", 3600000)
     s.add(Not(theorem))
-    
+
+    print("Verifying cnum32_lshr_const (1hr timeout)...")
+    print("Theorem: ci non-empty, k unconstrained, x in ci")
+    print("         implies (x>>(k&31)) in lshr_const(ci,k)\n")
+
     result = s.check()
     elapsed = time.monotonic() - t0
     if result == sat:
+        m = s.model()
         print("FAIL: Counterexample found!")
-        print(f"  elapsed: {elapsed:.3f}s")
         return 1
     elif result == unsat:
         print("PASS: cnum32_lshr_const verified.")
