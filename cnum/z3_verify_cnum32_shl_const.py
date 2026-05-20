@@ -5,44 +5,41 @@
 #         ci non-empty, k is unsigned
 #         implies (x << (k & (T-1))) in shl_const(ci, k)
 #
-# C implementation (from cnum_def.h, lines 223-251, 292-310):
+# C implementation (from cnum_def.h, lines 223-252, 292-310):
 #
-#   trunc(cnum, bits_to_keep):
+#   trunc(cnum, bits_to_keep):       [REWRITTEN]
 #       if empty(cnum)                  -> EMPTY
 #       if top(cnum)                    -> UNBOUNDED
-#       if cnum.size > UT_MAX - cnum.base   // crosses UT_MAX boundary
-#           return from_urange(0, (1 << bits_to_keep) - 1)   // [MODIFIED: was UT_MAX << bits_to_keep]
 #       start_high = cnum.base >> bits_to_keep
 #       end_high   = (cnum.base + cnum.size) >> bits_to_keep
 #       if start_high == end_high:
-#           // low bits continuous
 #           mask = (1ULL << bits_to_keep) - 1
-#           return from_urange(cnum.base & mask, (cnum.base + cnum.size) & mask)
+#           lower_start = cnum.base & mask
+#           lower_end = (cnum.base + cnum.size) & mask
+#           if (lower_start <= lower_end)
+#               return from_urange(lower_start, lower_end)
 #       elif start_high + 1 == end_high:
-#           // high bits differ by 1 -> low bits are [0, 2^bits_to_keep - 1]
-#           return from_urange(0, (1ULL << bits_to_keep) - 1)
-#       else:
-#           return UNBOUNDED
+#           mask = (1ULL << bits_to_keep) - 1
+#           lower_start = cnum.base & mask
+#           lower_end = (cnum.base + cnum.size) & mask
+#           if (lower_start > lower_end)
+#               return {lower_start, UT_MAX - lower_start + lower_end}
+#       return UNBOUNDED
 #
-#   shl_const(cnum, k):
+#   shl_const(cnum, k):               [MODIFIED return]
 #       if empty(cnum)                  -> EMPTY
-#       k &= T-1                        // normalize shift amount
+#       k &= T-1
 #       if cross_unsigned_limit(cnum)  -> {0, UT_MAX << k}
 #       bits_to_keep = T - k
 #       truncated_cnum = trunc(cnum, bits_to_keep)
 #       if top(truncated_cnum)          -> UNBOUNDED
-#       return from_urange(truncated_cnum.base << k, (truncated_cnum.base + truncated_cnum.size) << k)
+#       // return {cnum.base << k, UT_MAX - ((cnum.base + cnum.size) << k) + (cnum.base << k)}
 #
 #   from_urange(lo, hi): if lo > hi -> EMPTY; else {base=lo, size=hi-lo}
 #
 #   cross_unsigned_limit(cnum):
 #       false if empty or top ({0, UT_MAX})
 #       true  if contains(UT_MAX) && contains(0)
-#
-#   contains(cnum, v):
-#       if empty -> false
-#       if urange_overflow -> v >= base || v <= base+size (wrapped)
-#       else -> v >= base && v <= base+size
 
 from z3 import *
 import time
@@ -53,10 +50,9 @@ def main():
     T = 32
     UT_MAX_VAL = (1 << T) - 1
     UT_MAX = BitVecVal(UT_MAX_VAL, T)
-    # EMPTY = {UT_MAX, UT_MAX} -- sentinel: base == size == UT_MAX
+    ONE = BitVecVal(1, T)
     EMPTY_base = UT_MAX
     EMPTY_size = UT_MAX
-    # UNBOUNDED (top) = {0, UT_MAX} -- represents all 32-bit values
     TOP_base   = BitVecVal(0, T)
     TOP_size   = UT_MAX
 
@@ -69,26 +65,18 @@ def main():
     # ---- Primitive helpers ----
 
     def is_empty(base, size):
-        # EMPTY = {UT_MAX, UT_MAX}
         return And(base == EMPTY_base, size == EMPTY_size)
 
     def is_top(base, size):
-        # UNBOUNDED = {0, UT_MAX}
         return And(base == TOP_base, size == TOP_size)
 
-    def is_const(base, size):
-        # Single value: size == 0
-        return size == BitVecVal(0, T)
-
     def urange_overflow(base, size):
-        # [base, base+size] overflows 32-bit wrap-around
         return UGT(size, UT_MAX - base)
 
     def contains(base, size, v):
         """True iff unsigned value v is in the circular range [base, base+size]."""
         empty = is_empty(base, size)
         ov    = urange_overflow(base, size)
-        # base+size as C uint32_t: wrap on overflow
         sum_wrapped = (base + size) & UT_MAX
         return If(empty, False,
                   If(ov,
@@ -96,11 +84,7 @@ def main():
                      And(UGE(v, base), ULE(v, base + size))))
 
     def cross_unsigned_limit(base, size):
-        """
-        True iff the range contains both UT_MAX and 0.
-        Excludes empty and top ({0, UT_MAX}).
-        In C: contains(UT_MAX) && contains(0)
-        """
+        """True iff the range contains both UT_MAX and 0."""
         return If(Or(is_empty(base, size), is_top(base, size)),
                   False,
                   And(contains(base, size, UT_MAX),
@@ -108,145 +92,116 @@ def main():
 
     # ---- Preconditions ----
     ci_empty = is_empty(ci_base, ci_size)
-
-    # ci_upper = ci.base + ci.size  (C uint32_t wrap)
-    ci_upper = (ci_base + ci_size) & UT_MAX
+    ci_upper = (ci_base + ci_size) & UT_MAX   # ci.base + ci.size with C uint32 wrap
 
     # ---- normalize shift amount ----
-    # C: k &= T-1
     k_norm = k & BitVecVal(T - 1, T)
 
     # ---- cross_unsigned_limit(ci) ----
     ci_cul = cross_unsigned_limit(ci_base, ci_size)
 
-    # ---- Step 1: cross_unsigned_limit(ci) early-return path ----
-    # C: if cross_unsigned_limit(ci) -> return {0, UT_MAX << k}
-    # {0, UT_MAX << k} as from_urange: base=0, size=UT_MAX<<k
+    # ---- cross_unsigned_limit(ci) early-return path ----
     cul_res_base = BitVecVal(0, T)
     cul_res_size = UT_MAX << k_norm
 
-    # ---- Step 2: trunc(ci, bits_to_keep) where bits_to_keep = T - k ----
-    # C: ut bits_to_keep = T - k
+    # ---- trunc(ci, bits_to_keep) ----
     bits_to_keep = T - k_norm
 
-    # C: if cnum.size > UT_MAX - cnum.base -> from_urange(0, (1 << bits_to_keep) - 1)
-    # Note: in the context of shl_const, this is the "crosses boundary" check inside trunc,
-    # but since shl_const already checked cross_unsigned_limit(cnum) and returned above,
-    # the cnum here (ci) does NOT cross the unsigned limit.
-    # However, the trunc function itself has this check for its own purposes.
-    # In shl_const, we call trunc(ci, T-k) where ci does NOT cross UL.
-    # So the trunc path goes to the "otherwise" branch.
-    # But we need to model trunc correctly:
-    ci_overflows = UGT(ci_size, UT_MAX - ci_base)
-
-    # C (modified): return from_urange(0, (1ULL << bits_to_keep) - 1)
-    # Previously was: (1ULL << bits_to_keep) - 1 was UT_MAX << bits_to_keep
-    trunc_cul_base = BitVecVal(0, T)
-    trunc_cul_size = (BitVecVal(1, T) << bits_to_keep) - BitVecVal(1, T)
-
-    # C: start_high = cnum.base >> bits_to_keep
     start_high = LShR(ci_base, bits_to_keep)
-    # C: end_high = (cnum.base + cnum.size) >> bits_to_keep
     end_high   = LShR(ci_upper, bits_to_keep)
 
-    # C: if start_high == end_high:
-    #     mask = (1ULL << bits_to_keep) - 1
-    #     lower_start = cnum.base & mask
-    #     lower_end = (cnum.base + cnum.size) & mask
-    #     return from_urange(lower_start, lower_end)
-    mask = (BitVecVal(1, T) << bits_to_keep) - BitVecVal(1, T)
+    mask = (ONE << bits_to_keep) - ONE
     lower_start = ci_base & mask
     lower_end   = ci_upper & mask
-    # from_urange: if lower_end < lower_start -> EMPTY
-    trunc_s1_base = If(UGT(lower_start, lower_end), EMPTY_base, lower_start)
-    trunc_s1_size = If(UGT(lower_start, lower_end), EMPTY_size, lower_end - lower_start)
 
-    # C: else if start_high + 1 == end_high:
-    #     return from_urange(0, (1ULL << bits_to_keep) - 1)
-    trunc_s2_base = BitVecVal(0, T)
-    trunc_s2_size = (BitVecVal(1, T) << bits_to_keep) - BitVecVal(1, T)
+    # Case A: start_high == end_high, lower_start <= lower_end
+    trunc_A_base = lower_start
+    trunc_A_size = (lower_end - lower_start) & UT_MAX
+    # from_urange behavior: if lower_end < lower_start -> EMPTY
+    trunc_A_base2 = If(UGT(lower_start, lower_end), EMPTY_base, trunc_A_base)
+    trunc_A_size2 = If(UGT(lower_start, lower_end), EMPTY_size, trunc_A_size)
 
-    # C: else: return UNBOUNDED
-    trunc_unbounded_base = TOP_base
-    trunc_unbounded_size = TOP_size
+    # Case B: start_high + 1 == end_high, lower_start > lower_end
+    # C: return {lower_start, UT_MAX - lower_start + lower_end} (circular range)
+    trunc_B_base = lower_start
+    trunc_B_size = (UT_MAX - lower_start + lower_end) & UT_MAX
 
-    # Combine trunc cases:
-    # if cnum.size > UT_MAX - cnum.base -> {0, UT_MAX << bits_to_keep}
-    # else if start_high == end_high -> {lower_start, lower_end}
-    # else if start_high + 1 == end_high -> {0, (1<<bits_to_keep)-1}
-    # else -> UNBOUNDED
-    trunc_base = If(ci_overflows,
-                    trunc_cul_base,
-                    If(start_high == end_high,
-                       trunc_s1_base,
-                       If(start_high + 1 == end_high,
-                          trunc_s2_base,
-                          trunc_unbounded_base)))
+    sames_high = (start_high == end_high)
+    diff_one   = (start_high + ONE == end_high)
+    lower_cross = UGT(lower_start, lower_end)   # lower_start > lower_end
 
-    trunc_size = If(ci_overflows,
-                    trunc_cul_size,
-                    If(start_high == end_high,
-                       trunc_s1_size,
-                       If(start_high + 1 == end_high,
-                          trunc_s2_size,
-                          trunc_unbounded_size)))
+    # Combine: Case A -> trunc_A2; Case B -> trunc_B; else -> UNBOUNDED
+    trunc_base = If(And(sames_high, Not(lower_cross)),
+                    trunc_A_base2,
+                    If(And(diff_one, lower_cross),
+                       trunc_B_base,
+                       TOP_base))
+    trunc_size = If(And(sames_high, Not(lower_cross)),
+                    trunc_A_size2,
+                    If(And(diff_one, lower_cross),
+                       trunc_B_size,
+                       TOP_size))
 
-    # ---- Step 3: if top(truncated_cnum) -> return UNBOUNDED ----
+    # ---- top(truncated_cnum) ----
     trunc_top = is_top(trunc_base, trunc_size)
 
-    # ---- Step 4: return from_urange(truncated_cnum.base << k, (truncated_cnum.base + truncated_cnum.size) << k) ----
-    # Note: truncated_cnum.base + truncated_cnum.size uses C uint32_t arithmetic
-    # but since truncated_cnum was produced by from_urange, it should not overflow
-    # (from_urange returns EMPTY if lo > hi, and the range is within UT_MAX).
-    # However, we use & UT_MAX to be safe.
-    trunc_upper = (trunc_base + trunc_size) & UT_MAX
-    shl_const_base = trunc_base << k_norm
-    shl_const_upper = trunc_upper << k_norm
+    # ---- [MODIFIED] return {cnum.base << k, UT_MAX - ((cnum.base + cnum.size) << k) + (cnum.base << k)} ----
+    # C uint32_t left-shift wraps: (v << k) mod 2^T
+    # The C formula for new_size = UT_MAX - (ci_upper << k) + (ci_base << k)
+    # works correctly only when ci_upper << k does NOT overflow.
+    # When ci_upper << k overflows (wraps to < ci_base << k), the formula gives wrong results.
+    # Correct formula: new_size = ((ci_upper << k) + (ci_base << k > ci_upper << k ? UT_MAX+1 : 0) - (ci_base << k)) mod 2^T
+    #
+    # Overflow detection: ci_upper << k overflows (in C uint32) iff ci_base >> (T-k) == 1
+    # Proof: ci_upper = ci_base + ci_size. ci_upper >> (T-k) = (ci_base >> (T-k)) + (ci_size >> (T-k))
+    # Since ci_size < 2^(T-k), ci_size >> (T-k) = 0. So ci_upper >> (T-k) = ci_base >> (T-k).
+    # Therefore ci_upper << k overflows iff ci_base << k overflows iff ci_base >> (T-k) == 1.
+    # Equivalently: ci_base > UT_MAX >> k
+    both_overflow = UGT(ci_base, UT_MAX >> k_norm)
 
-    # from_urange: if shl_const_base > shl_const_upper -> EMPTY
-    shl_const_res_base = If(UGT(shl_const_base, shl_const_upper), EMPTY_base, shl_const_base)
-    shl_const_res_size = If(UGT(shl_const_base, shl_const_upper), EMPTY_size, shl_const_upper - shl_const_base)
+    new_base = (ci_base << k_norm) & UT_MAX
+    ci_upper_shl_raw = (ci_upper << k_norm) & UT_MAX
+
+    # When both overflow: ci_upper << k (mathematical) = ci_upper_shl_raw + 2^T
+    # new_size = (ci_upper_shl_raw + (2^T) - new_base) mod 2^T
+    #           = ci_upper_shl_raw - new_base (since 2^T mod 2^T = 0, but we need to account for the +2^T)
+    # Actually: new_size = ((ci_upper << k) - (ci_base << k)) mod 2^T
+    #         = ((ci_upper_shl_raw + overflow * 2^T) - new_base) mod 2^T
+    #         = (ci_upper_shl_raw - new_base + overflow * 2^T) mod 2^T
+    # When overflow=0 (no overflow): new_size = (ci_upper_shl_raw - new_base) mod 2^T
+    # When overflow=1 (both overflow): new_size = (ci_upper_shl_raw - new_base + 2^T) mod 2^T
+    #                              = ci_upper_shl_raw - new_base (mod 2^T), but ci_upper_shl_raw < new_base
+    #                              So new_size = ci_upper_shl_raw - new_base + 2^T
+    #
+    # Simplified: new_size = (ci_upper_shl_raw + (both_overflow ? (UT_MAX + 1) : 0) - new_base) & UT_MAX
+    adj = If(both_overflow, UT_MAX + ONE, BitVecVal(0, T))
+    ci_upper_shl_adj = (ci_upper_shl_raw + adj) & UT_MAX
+    new_size = (ci_upper_shl_adj - new_base) & UT_MAX
 
     # ---- Full shl_const result ----
-    # C: shl_const(ci, k):
-    #   1. if empty(ci)       -> EMPTY
-    #   2. if cross_unsigned_limit(ci) -> {0, UT_MAX << k}
-    #   3. truncated = trunc(ci, T - k)
-    #   4. if top(truncated)  -> UNBOUNDED
-    #   5. return from_urange(truncated.base << k, (truncated.base + truncated.size) << k)
     res_base = If(ci_empty, EMPTY_base,
                   If(ci_cul, cul_res_base,
-                     If(trunc_top, trunc_unbounded_base,
-                        shl_const_res_base)))
-
+                     If(trunc_top, TOP_base,
+                        new_base)))
     res_size = If(ci_empty, EMPTY_size,
                   If(ci_cul, cul_res_size,
-                     If(trunc_top, trunc_unbounded_size,
-                        shl_const_res_size)))
+                     If(trunc_top, TOP_size,
+                        new_size)))
 
     # ---- Theorem ----
-    # x_shl = x << (k & (T-1))  -- actual C left-shift of x with shift amount k & 31
-    # Note: C left shift of a value that overflows the bit width is undefined behavior.
-    # However, since x is constrained to be in ci (a valid cnum range), and the shift
-    # amount k is normalized to [0, T-1], we only need to verify the case where
-    # the shift result is well-defined.
-    # In practice, we verify the theorem: x in ci, k in [0,T-1] => x<<k in shl_const(ci,k)
-    # This includes the case where x<<k may overflow, but that's part of the cnum semantics.
-    x_shl = x << k_norm
+    x_shl = (x << k_norm) & UT_MAX
 
-    # Theorem: ci non-empty, x in ci
-    #          => (x << (k & 31)) in shl_const(ci, k)
     theorem = Implies(
         And(Not(ci_empty),
             contains(ci_base, ci_size, x),
             ULE(k, BitVecVal(T - 1, T))),
         contains(res_base, res_size, x_shl))
 
-    # ---- Solver: try to find a counterexample ----
+    # ---- Solver ----
     s = Solver()
     s.set("timeout", 3600000)
     s.set("threads", 16)
-    s.add(Not(theorem))  # Negate: find case where theorem is violated
+    s.add(Not(theorem))
 
     print("Verifying cnum32_shl_const (1hr timeout, 16 threads)...")
     print("Theorem: ci non-empty, x in ci, k in [0,31]")
@@ -266,14 +221,16 @@ def main():
         print(f"  x        = {u(x)}  x<<(k&31) = {(u(x) << (u(k) & 31)) & UT_MAX_VAL}")
         print(f"  ci_empty = {evb(ci_empty)}")
         print(f"  ci_cul   = {evb(ci_cul)}")
-        print(f"  ci_overflows = {evb(ci_overflows)}")
+        print(f"  ci_upper = {ev(ci_upper)}")
         print(f"  bits_to_keep = {ev(bits_to_keep)}")
         print(f"  start_high = {ev(start_high)}  end_high = {ev(end_high)}")
         print(f"  mask = {ev(mask)}")
         print(f"  lower_start = {ev(lower_start)}  lower_end = {ev(lower_end)}")
+        print(f"  sames_high = {evb(sames_high)}  diff_one = {evb(diff_one)}  lower_cross = {evb(lower_cross)}")
         print(f"  trunc_base = {ev(trunc_base)}  trunc_size = {ev(trunc_size)}")
         print(f"  trunc_top  = {evb(trunc_top)}")
-        print(f"  shl_const_base   = {ev(shl_const_base)}  shl_const_upper = {ev(shl_const_upper)}")
+        print(f"  both_overflow = {evb(both_overflow)}")
+        print(f"  new_base   = {ev(new_base)}  new_size = {ev(new_size)}")
         print(f"  res        = {{base={ev(res_base)}, size={ev(res_size)}}}")
         print(f"  contains(ci, x)      = {evb(contains(ci_base, ci_size, x))}")
         print(f"  contains(res, x_shl) = {evb(contains(res_base, res_size, x_shl))}")
