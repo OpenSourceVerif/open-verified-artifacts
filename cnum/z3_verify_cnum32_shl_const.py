@@ -132,8 +132,8 @@ def main():
     # Theorem: ci non-empty, x in ci => x<<(k&31) in shl_const(ci, k)
     # UNBOUNDED (top: base=0, size=UT_MAX) contains everything
     theorem = Implies(
-        contains(ci_base, ci_size, x),
-        contains(res_b, res_s, x_shl))
+        And(contains(ci_base, ci_size, x),
+            contains(res_b, res_s, x_shl)))
 
     s = Solver()
     s.set("timeout", 3600000)
@@ -141,7 +141,7 @@ def main():
     s.add(Not(theorem))
 
     print("Verifying cnum32_shl_const (1hr timeout, 16 threads)...")
-    print("Theorem: x in ci")
+    print("Theorem: ci non-empty, x in ci")
     print("         implies (x << (k & 31)) in shl_const(ci, k)\n")
 
     result = s.check()

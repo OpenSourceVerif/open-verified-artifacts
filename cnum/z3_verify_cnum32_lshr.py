@@ -186,8 +186,7 @@ def main():
     # Theorem: ci non-empty, cx non-empty, x in ci, k in cx
     #          => x>>(k&31) is in lshr(ci, cx)
     theorem = Implies(
-        And(Not(ci_empty), Not(cx_empty),
-            contains(ci_base, ci_size, x),
+        And(contains(ci_base, ci_size, x),
             contains(cx_base, cx_size, k)),
         contains(res_b, res_s, x_shr))
 
