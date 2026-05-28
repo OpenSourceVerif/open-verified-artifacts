@@ -18,21 +18,21 @@
 #       if empty(ci) || empty(cx)         -> EMPTY
 #       normalized_k = normalize_shift_k(cx)
 #       if is_const(normalized_k)         -> lshr_const(ci, normalized_k.base)
-#       if cross_unsigned_limit(ci)       -> {0, UT_MAX>>normalized_k.base}
+#       if urange_overflow(ci)       -> {0, UT_MAX>>normalized_k.base}
 #       return from_urange(ci.base>>(norm_b+norm_s), ci_upper>>norm_b)
 #       (C shift implicitly masks shift amount by (T-1))
 #
 #   lshr_const(ci, k):
 #       if empty(ci)                       -> EMPTY
 #       k &= T-1
-#       if cross_unsigned_limit(ci)       -> {0, UT_MAX>>k}
+#       if urange_overflow(ci)       -> {0, UT_MAX>>k}
 #       new_base = ci.base >> k
 #       new_ub   = (ci.base + ci.size) >> k
 #       return from_urange(new_base, new_ub)
 #
 #   from_urange(lo, hi): if lo > hi -> EMPTY; else {base=lo, size=hi-lo}
 #
-#   cross_unsigned_limit(cnum):
+#   urange_overflow(cnum):
 #       false if empty or {0, UT_MAX} (top)
 #       true  if contains(UT_MAX) && contains(0)
 
@@ -89,22 +89,11 @@ def main():
                      Or(UGE(v, base), ULE(v, sum_wrapped)),
                      And(UGE(v, base), ULE(v, base + size))))
 
-    def cross_unsigned_limit(base, size):
-        """
-        True iff the range contains both UT_MAX and 0.
-        Excludes empty and top ({0, UT_MAX}).
-        In C: contains(UT_MAX) && contains(0)
-        """
-        return If(Or(is_empty(base, size), is_top(base, size)),
-                  False,
-                  And(contains(base, size, UT_MAX),
-                      contains(base, size, BitVecVal(0, T))))
-
     # ---- Preconditions (theorem assumptions) ----
     ci_empty = is_empty(ci_base, ci_size)
     cx_empty = is_empty(cx_base, cx_size)
     cx_top   = is_top(cx_base, cx_size)
-    ci_cul   = cross_unsigned_limit(ci_base, ci_size)
+    ci_cul   = urange_overflow(ci_base, ci_size)
 
     # ---- normalize_shift_k(cx) ----
     # Equivalent C: (cx.size >= T) || (cx.base % T + cx.size >= T)
@@ -160,7 +149,7 @@ def main():
     nc_res_b = If(UGT(lo_nc, hi_nc), EMPTY_base, lo_nc)
     nc_res_s = If(UGT(lo_nc, hi_nc), EMPTY_size, hi_nc - lo_nc)
 
-    # ---- cross_unsigned_limit(ci) early-return in general path ----
+    # ---- urange_overflow(ci) early-return in general path ----
     # C source (line 292): {0, UT_MAX >> normalized_k.base}
     # normalized_k.base is norm_b; C >> operator implicitly masks by (T-1)
     cul_res_b = BitVecVal(0, T)
@@ -206,31 +195,6 @@ def main():
         m = s.model()
         print("FAIL: Counterexample found!")
         print(f"  elapsed: {elapsed:.3f}s")
-        def u(name):    return m[name].as_long()
-        def ev(expr):   return m.eval(expr).as_long()
-        def evb(expr):  return is_true(m.eval(expr))
-        print(f"\n  ci        = {{base={u(ci_base)}, size={u(ci_size)}}}")
-        print(f"  cx        = {{base={u(cx_base)}, size={u(cx_size)}}}")
-        print(f"  ci_empty  = {evb(ci_empty)}")
-        print(f"  ci_cul    = {evb(ci_cul)}")
-        print(f"  cx_empty  = {evb(cx_empty)}  cx_top = {evb(cx_top)}")
-        print(f"  norm_b    = {ev(norm_b)}  norm_s = {ev(norm_s)}")
-        print(f"  norm_const     = {evb(norm_const)}")
-        print(f"  norm_unbounded  = {evb(norm_unbounded)}")
-        print(f"  norm_wraps_or_ge_T = {evb(norm_wraps_or_ge_T)}")
-        print(f"  norm_base_ge_T    = {evb(norm_base_ge_T)}")
-        print(f"  norm_b_masked = {ev(norm_b_masked)}  norm_bsum_masked = {ev(norm_bsum_masked)}")
-        print(f"  k      = {u(k)}  (k & 31) = {u(k) & 31}")
-        print(f"  x      = {u(x)}  x>>(k&31) = {u(x) >> (u(k) & 31)}")
-        print(f"  contains(ci,x)   = {evb(contains(ci_base,ci_size,x))}")
-        print(f"  contains(cx,k)   = {evb(contains(cx_base,cx_size,k))}")
-        print(f"  const_nc_b = {ev(const_nc_b)}  const_nc_h = {ev(const_nc_h)}")
-        print(f"  const_res_b = {ev(const_res_b)}  const_res_s = {ev(const_res_s)}")
-        print(f"  lo_nc = {ev(lo_nc)}  hi_nc = {ev(hi_nc)}  hi_nc_raw = {ev(hi_nc_raw)}")
-        print(f"  nc_res_b = {ev(nc_res_b)}  nc_res_s = {ev(nc_res_s)}")
-        print(f"  cul_res_b = {ev(cul_res_b)}  cul_res_s = {ev(cul_res_s)}")
-        print(f"  res       = {{base={ev(res_b)}, size={ev(res_s)}}}")
-        print(f"  contains(res, x_shr) = {evb(contains(res_b, res_s, x_shr))}")
         return 1
     elif result == unsat:
         print("PASS: cnum32_lshr verified.")

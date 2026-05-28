@@ -8,7 +8,7 @@
 #   lshr_const(ci, k):
 #               if empty(ci)              -> EMPTY
 #               k &= T-1;
-#               if cross_unsigned_limit(ci) -> {0, UT_MAX>>k}
+#               if urange_overflow(ci) -> {0, UT_MAX>>k}
 #               new_base = ci.base >> k
 #               new_ub   = (ci.base + ci.size) >> k
 #               return from_urange(new_base, new_ub)
@@ -52,19 +52,13 @@ def main():
                      Or(UGE(v, base), ULE(v, sum_wrapped)),
                      And(UGE(v, base), ULE(v, base + size))))
 
-    def cross_unsigned_limit(base, size):
-        return If(Or(is_empty(base, size), is_top(base, size)),
-                  False,
-                  And(contains(base, size, UT_MAX),
-                      contains(base, size, BitVecVal(0, T))))
-
     ci_empty = is_empty(ci_base, ci_size)
     ci_top   = is_top(ci_base, ci_size)
-    ci_cul   = cross_unsigned_limit(ci_base, ci_size)
+    ci_cul   = urange_overflow(ci_base, ci_size)
 
     # lshr_const: k &= T-1
     k_norm = k & BitVecVal(T - 1, T)
-    # cross_unsigned_limit(ci): result is {0, UT_MAX>>k}
+    # urange_overflow(ci): result is {0, UT_MAX>>k}
     cul_res_base = BitVecVal(0, T)
     cul_res_size = LShR(UT_MAX, k_norm)
     # non-cul path: from_urange(ci.base>>k, (ci.base+ci.size)>>k)

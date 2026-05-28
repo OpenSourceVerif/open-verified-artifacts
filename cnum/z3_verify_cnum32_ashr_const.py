@@ -6,7 +6,7 @@ C source (ashr_const, cnum_def.h lines 335-350):
     struct cnum_t ashr_const(cnum, k):
         if is_empty(cnum) return EMPTY
         k &= T-1
-        if cross_signed_limit(cnum) return from_srange(ST_MIN>>k, ST_MAX>>k)
+        if srange_overflow(cnum) return from_srange(ST_MIN>>k, ST_MAX>>k)
         st min = (st)cnum.base >> k
         st max = (st)(cnum.base + cnum.size) >> k
         return from_srange(min, max)
@@ -71,11 +71,8 @@ def main():
                   Or(UGE(v, b), ULE(v, b + s)),
                   And(UGE(v, b), ULE(v, b + s)))
 
-    def cross_signed_limit(base, size):
-        return If(is_empty(base, size),
-                  False,
-                  And(contains(base, size, BitVecVal(ST_MAX_VAL, T)),
-                      contains(base, size, BitVecVal(ST_MIN_VAL, T))))
+    def srange_overflow(base, size):
+        return And(contains(base, size, ST_MAX_VAL), contains(base, size, ST_MIN_VAL))
 
     def from_srange(min_s, max_s):
         # Signed comparison: wrapped if min_s > max_s (as signed T-bit values)
@@ -95,11 +92,11 @@ def main():
     # 4. Model the C ashr_const
     # ------------------------------------------------------------------
     ci_empty = is_empty(ci_base, ci_size)
-    ci_csl   = cross_signed_limit(ci_base, ci_size)
+    ci_csl   = srange_overflow(ci_base, ci_size)
 
     k_norm = k & BitVecVal(T - 1, T)
 
-    # Branch 1: cross_signed_limit -> from_srange(ST_MIN>>k, ST_MAX>>k)
+    # Branch 1: srange_overflow -> from_srange(ST_MIN>>k, ST_MAX>>k)
     st_min = BitVecVal(ST_MIN_VAL, T)
     st_max = BitVecVal(ST_MAX_VAL, T)
     csl_min = s_shr(st_min, k_norm)

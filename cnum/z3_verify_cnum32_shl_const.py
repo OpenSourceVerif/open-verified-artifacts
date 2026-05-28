@@ -29,7 +29,7 @@
 #   shl_const(cnum, k):               [MODIFIED return]
 #       if empty(cnum)                  -> EMPTY
 #       k &= T-1
-#       if cross_unsigned_limit(cnum)  -> {0, UT_MAX << k}
+#       if urange_overflow(cnum)  -> {0, UT_MAX << k}
 #       bits_to_keep = T - k
 #       truncated_cnum = trunc(cnum, bits_to_keep)
 #       if top(truncated_cnum)          -> UNBOUNDED
@@ -37,7 +37,7 @@
 #
 #   from_urange(lo, hi): if lo > hi -> EMPTY; else {base=lo, size=hi-lo}
 #
-#   cross_unsigned_limit(cnum):
+#   urange_overflow(cnum):
 #       false if empty or top ({0, UT_MAX})
 #       true  if contains(UT_MAX) && contains(0)
 
@@ -83,12 +83,9 @@ def main():
                      Or(UGE(v, base), ULE(v, sum_wrapped)),
                      And(UGE(v, base), ULE(v, base + size))))
 
-    def cross_unsigned_limit(base, size):
-        """True iff the range contains both UT_MAX and 0."""
-        return If(Or(is_empty(base, size), is_top(base, size)),
-                  False,
-                  And(contains(base, size, UT_MAX),
-                      contains(base, size, BitVecVal(0, T))))
+    def urange_overflow(base, size):
+        # [base, base+size] overflows 32-bit wrap-around
+        return UGT(size, UT_MAX - base)
 
     # ---- Preconditions ----
     ci_empty = is_empty(ci_base, ci_size)
@@ -97,10 +94,10 @@ def main():
     # ---- normalize shift amount ----
     k_norm = k & BitVecVal(T - 1, T)
 
-    # ---- cross_unsigned_limit(ci) ----
-    ci_cul = cross_unsigned_limit(ci_base, ci_size)
+    # ---- urange_overflow(ci) ----
+    ci_cul = urange_overflow(ci_base, ci_size)
 
-    # ---- cross_unsigned_limit(ci) early-return path ----
+    # ---- urange_overflow(ci) early-return path ----
     cul_res_base = BitVecVal(0, T)
     cul_res_size = UT_MAX << k_norm
 
