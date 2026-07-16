@@ -1,0 +1,13 @@
+name = "cnum"
+version = "0.1.0"
+keywords = ["math"]
+defaultTargets = ["Cnum"]
+
+[leanOptions]
+pp.unicode.fun = true # pretty-prints `fun a ↦ b`
+relaxedAutoImplicit = false
+weak.linter.style.header = false
+maxSynthPendingDepth = 3
+
+[[lean_lib]]
+name = "Cnum"
