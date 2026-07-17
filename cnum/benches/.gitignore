@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+compile_commands.json
+*.o
+*.d
+.cache
+cnum.out
