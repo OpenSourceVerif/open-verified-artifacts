@@ -35,7 +35,7 @@ nix develop
 
 The file [Cnum/Basic.lean](./Cnum/Basic.lean) contains a `Cnum` structure that
 mimics the Linux kernel implementation, and the proofs that the new `contains`,
-`normalize` functions preserve soundness.
+`normalize`, `smin` and `smax` functions preserve soundness.
 
 To test check the proofs, you can simply build the module with:
 
