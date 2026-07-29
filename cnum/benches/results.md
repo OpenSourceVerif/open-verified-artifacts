@@ -64,39 +64,27 @@
 
 #### -O0
 
-| Test                 | contains     | contains_new |
-| -------------------- | ------------ | ------------ |
-| empty                | 29.280 ns/op | 29.371 ns/op |
-| non-overflow inside  | 44.314 ns/op | 29.613 ns/op |
-| non-overflow outside | 44.670 ns/op | 29.634 ns/op |
-| overflow high side   | 44.457 ns/op | 29.570 ns/op |
-| overflow low side    | 44.421 ns/op | 29.422 ns/op |
-| overflow outside     | 44.743 ns/op | 29.532 ns/op |
-| singleton inside     | 44.474 ns/op | 29.392 ns/op |
-| singleton outside    | 44.229 ns/op | 29.462 ns/op |
-| full range           | 44.286 ns/op | 29.408 ns/op |
-
-| Test                    | normalize   | normalize_new |
-| ----------------------- | ----------- | ------------- |
-| normal small range      | 1.254 ns/op | 1.049 ns/op   |
-| full range normalized   | 1.055 ns/op | 1.046 ns/op   |
-| full range nonzero base | 1.053 ns/op | 1.055 ns/op   |
-| empty                   | 1.054 ns/op | 1.059 ns/op   |
-| signed max full range   | 1.051 ns/op | 1.049 ns/op   |
-| max base singleton      | 1.253 ns/op | 1.045 ns/op   |
+| Test                    | contains     | contains_new |
+| ----------------------- | ------------ | ------------ |
+| normal small range      | 28.693 ns/op | 29.493 ns/op |
+| full range normalized   | 29.944 ns/op | 29.629 ns/op |
+| full range nonzero base | 29.983 ns/op | 29.890 ns/op |
+| empty                   | 29.620 ns/op | 29.578 ns/op |
+| signed max full range   | 29.882 ns/op | 29.584 ns/op |
+| max base singleton      | 29.076 ns/op | 29.336 ns/op |
 
 ## Normalize
 
 #### -O2
 
-| Test                    | contains    | contains_new |
-| ----------------------- | ----------- | ------------ |
-| normal small range      | 1.242 ns/op | 1.038 ns/op  |
-| full range normalized   | 1.043 ns/op | 1.040 ns/op  |
-| full range nonzero base | 1.043 ns/op | 1.040 ns/op  |
-| empty                   | 1.043 ns/op | 1.080 ns/op  |
-| signed max full range   | 1.063 ns/op | 1.039 ns/op  |
-| max base singleton      | 1.244 ns/op | 1.040 ns/op  |
+| Test                    | normalize   | normalize_new |
+| ----------------------- | ----------- | ------------- |
+| normal small range      | 1.255 ns/op | 1.217 ns/op   |
+| full range normalized   | 1.019 ns/op | 1.217 ns/op   |
+| full range nonzero base | 1.031 ns/op | 1.221 ns/op   |
+| empty                   | 1.023 ns/op | 1.217 ns/op   |
+| signed max full range   | 1.020 ns/op | 1.218 ns/op   |
+| max base singleton      | 1.218 ns/op | 1.219 ns/op   |
 
 #### -O0
 

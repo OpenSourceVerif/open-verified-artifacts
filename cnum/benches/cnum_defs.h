@@ -195,7 +195,7 @@ struct cnum_t FN(normalize)(struct cnum_t cnum)
 
 struct cnum_t FN(normalize_new)(struct cnum_t cnum)
 {
-	if (cnum.size == UT_MAX && cnum.base != 0)
+	if (cnum.size == UT_MAX)
 		cnum.base = 0;
 	return cnum;
 }

@@ -83,7 +83,6 @@ theorem smin_eq (cnum : Cnum 64) :
         cases cnum
         sorry
 
-
 def smax (cnum : Cnum w) : BitVec w :=
     if cnum.srange_overflow then
         ST_MAX
@@ -114,7 +113,7 @@ def normalize (cnum : Cnum w) : Cnum w :=
         cnum
 
 def normalize_new (cnum : Cnum w) : Cnum w :=
-    if cnum.size == UT_MAX && cnum.base != 0 then
+    if cnum.size == UT_MAX then
         ⟨0, cnum.size⟩
     else
         cnum
@@ -134,9 +133,8 @@ theorem normalize_equiv (cnum : Cnum 64) (v : BitVec 64) :
       split
       · case isTrue hnew =>
         simp at hnnorm hnew
-        have hbase : cnum.base = ST_MAX := by grind
         have hsize : cnum.size = UT_MAX := by grind
-        rw [hbase, hsize]
+        rw [hsize]
         cases cnum
         simp at *
         dsimp [UT_MAX, ST_MAX, empty] at *
