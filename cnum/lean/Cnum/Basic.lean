@@ -25,6 +25,8 @@ abbrev is_empty (cnum : Cnum w) : Prop :=
 abbrev urange_overflow (cnum : Cnum w) : Prop :=
     cnum.size > UT_MAX - cnum.base
 
+#eval (empty : Cnum 64).urange_overflow
+
 abbrev contains (cnum : Cnum w) (v : BitVec w) : Prop := 
     if is_empty cnum then
         false
@@ -70,7 +72,8 @@ def smin_new (cnum : Cnum w) : BitVec w :=
     if cnum.srange_overflow then ST_MIN else cnum.base
 
 theorem smin_eq (cnum : Cnum 64) :
-    cnum.smin = cnum.smin_new := by
+    !cnum.is_empty → cnum.smin = cnum.smin_new := by
+    intro h
     dsimp [smin, smin_new]
     split
     · rfl
@@ -81,7 +84,14 @@ theorem smin_eq (cnum : Cnum 64) :
       · case isFalse h_base_le_base_plus_size =>
         simp
         cases cnum
-        sorry
+        simp [srange_overflow, contains, is_empty, urange_overflow, empty] at *
+        dsimp [UT_MAX, ST_MAX, ST_MIN, BitVec.intMax, BitVec.intMin, BitVec.twoPow] at *
+        apply Classical.byContradiction
+        intro hsize
+        apply hnoverflow h
+        · split <;> bv_decide
+        · exact h
+        · split <;> bv_decide
 
 def smax (cnum : Cnum w) : BitVec w :=
     if cnum.srange_overflow then
@@ -93,7 +103,8 @@ def smax_new (cnum : Cnum w) : BitVec w :=
     if cnum.srange_overflow then ST_MAX else cnum.base + cnum.size
 
 theorem smax_eq (cnum : Cnum 64) :
-    cnum.smax = cnum.smax_new := by
+    !cnum.is_empty → cnum.smax = cnum.smax_new := by
+    intro h
     dsimp [smax, smax_new]
     split
     · rfl
@@ -104,7 +115,14 @@ theorem smax_eq (cnum : Cnum 64) :
       · case isFalse h_base_lt_base_plus_size =>
         simp
         cases cnum
-        sorry
+        simp [srange_overflow, contains, is_empty, urange_overflow, empty] at *
+        dsimp [UT_MAX, ST_MAX, ST_MIN, BitVec.intMax, BitVec.intMin, BitVec.twoPow] at *
+        apply Classical.byContradiction
+        intro hsize
+        apply hnoverflow h
+        · split <;> bv_decide
+        · exact h
+        · split <;> bv_decide
 
 def normalize (cnum : Cnum w) : Cnum w :=
     if cnum.size == UT_MAX && cnum.base != 0 && cnum.base != ST_MAX then
